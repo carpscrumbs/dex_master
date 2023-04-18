@@ -1,0 +1,779 @@
+################################################## MASTER SCRIPT #############################################################################
+
+# install packages
+install.packages("tidyverse")
+install.packages("gridExtra")
+
+
+# Load required libraries
+library(tidyverse)
+library(ggplot2)
+library(gridExtra)
+
+################################################################## INPUTS #############################################################################
+############################################ HERE YOU CAN DECIDE MULTIPLE VARIABLES FOR THE ANALYSIS #######################################################################
+
+start <- "2020-03-01"
+end <- "2023-03-01"
+frequencyX <- "week"
+
+lookback_period <- 60
+lookforward_period <- 7
+
+#################################################################################################################################
+############################################ SUMMARY OF SECTOR IC TEST #######################################################################
+#################################################################################################################################
+
+### Step one <- creates date_tibble
+########################################################## DATE_TIBBLE ##########################################################################################################
+### Steo two <- loads, cleans, long formats, calculates change and adds change column, cleans whitespace, left joins to date_tibble, range of sector_metric_table_date
+####################################### RANGE OF FOR EACH METRIC SECTOR_METRIC_TABLE_DATE ##########################################################################################################
+### Step two.five <- full joins the metric tables into dex_table_date
+######################################################### DEX_TABLE_DATE ##########################################################################################################
+### Step three <- formats long the dex_price csv, cleans the dex_price csv, calculates change over following month, left joins to date and creates dex_RONX_table_date
+##################################################### SECTOR_RONX_TABLE_DATE ##########################################################################################################
+### Step four <- join dex_table_date and dex_RONX_table_date to get full_dex_table
+###################################################### FULL_SECTOR_TABLE ##########################################################################################################
+### Step five <- calculate ranks and create dex_table_ranks using full_dex_table
+####################################################### DEX_TABLE_RANKS ##########################################################################################################
+### Step six <- calculate the correlation of ranks of each metric to RONX ranks. filter for just columns with corr and get dex_table_corr_date_only
+################################################## DEX_TABLE_CORR_DATE_ONLY ##########################################################################################################
+### Step seven <- use dex_table_corr_date_only and calculate cumulative sum of each metric, filter for only columns with cum in the column header sector_cum_only
+###################################################### SECTOR_CUM_ONLY ##########################################################################################################
+### Step eight <- Calculate the mean, std dev, obs, tstat for all the metrics, summarize and put in one table called combined_summary_stats_long
+################################################### COMBINED_SUMMARY_STATS_LONG ##########################################################################################################
+
+
+################################################## STEP ONE #############################################################################
+############################################ CREATE DATE TIBBLE #######################################################################
+#################################################################################################################################
+
+# Define the start date, end date, and frequency
+start_date <- as.Date(start)
+end_date <- as.Date(end)
+frequency <- frequencyX
+
+# Generate a sequence of monthly dates between start_date and end_date
+date_sequence <- seq(from = start_date, to = end_date, by = frequency)
+
+# Create a tibble with the date_sequence
+date_tibble <- tibble(Date = date_sequence)
+
+# Print the date_tibble
+print(date_tibble)
+
+# This code defines the start date, end date, and frequency
+# It generates a sequence of monthly dates between the start date and end date
+# Then, it creates a tibble with the date sequence and prints it
+
+################################################## STEP TWO #############################################################################
+# load metric csv, remove unneccessary stuff from column headers, make sure all column headers are present, transform to long format ################
+#################################################################################################################################
+### load metrics data in fundamentals_data
+
+setwd("~/Desktop/dex_data")
+dex_price <- read_csv("dex_price.csv")
+dex_tvl <- read_csv("dex_tvl.csv")
+dex_pffd <- read_csv("dex_pffd.csv")
+dex_gmv <- read_csv("dex_gmv.csv")
+dex_fees <- read_csv("dex_fees.csv")
+dex_developers <- read_csv("dex_devs.csv")
+dex_daa <- read_csv("dex_daa.csv")
+
+# This code sets the working directory to the desktop folder named "dex_data" and loads several csv files into separate data frames named according to their corresponding metric names. 
+#These metrics likely relate to a decentralized exchange.
+
+
+### Remove ($) and (%) from column names
+# Everything with dollar values has ($) in the column header
+
+dex_price <- dex_price %>%
+  rename_with(~ gsub("[\\$%()]", "", .))
+dex_gmv <- dex_gmv %>%
+  rename_with(~ gsub("[\\$%()]", "", .))
+dex_fees <- dex_fees %>%
+  rename_with(~ gsub("[\\$%()]", "", .))
+dex_tvl <- dex_tvl %>%
+  rename_with(~ gsub("[\\$%()]", "", .))
+dex_developers <- dex_developers %>%
+  rename_with(~ gsub("[\\$%()]", "", .))
+dex_daa <- dex_daa %>%
+  rename_with(~ gsub("[\\$%()]", "", .))
+dex_pffd <- dex_pffd %>%
+  rename_with(~ gsub("[\\$%()]", "", .))
+
+#These lines of code use the `rename_with()` function from the `dplyr` package to remove certain characters (such as "$", "%", "(", and ")") from the column names in several data frames (`dex_price`, `dex_gmv`, `dex_fees`, `dex_tvl`, `dex_developers`, `dex_daa`, and `dex_pffd`).
+
+##### Gather the data into a long format
+## change values name to coordinate with the particular measure of success
+
+dex_price_table <- dex_price %>%
+  pivot_longer(cols = -Date, names_to = "ticker", values_to = "price")
+dex_tvl_table <- dex_tvl %>%
+  pivot_longer(cols = -Date, names_to = "ticker", values_to = "tvl")
+dex_pffd_table <- dex_pffd %>%
+  pivot_longer(cols = -Date, names_to = "ticker", values_to = "pffd")
+dex_gmv_table <- dex_gmv %>%
+  pivot_longer(cols = -Date, names_to = "ticker", values_to = "gmv")
+dex_fees_table <- dex_fees %>%
+  pivot_longer(cols = -Date, names_to = "ticker", values_to = "fees")
+dex_developers_table <- dex_developers %>%
+  pivot_longer(cols = -Date, names_to = "ticker", values_to = "developers")
+dex_daa_table <- dex_daa %>%
+  pivot_longer(cols = -Date, names_to = "ticker", values_to = "daa")
+
+# The code is creating multiple tables by pivoting the long format data frames "dex_price", "dex_tvl", "dex_pffd", "dex_gmv", "dex_fees", "dex_developers", and "dex_daa". 
+#The pivot_longer() function is being used to transform the data frames from wide to long format, resulting in 3 variables: Date, ticker, and variable. The "cols" arguement indicates the columns that should be unpivoted or transformed. 
+#The "names_to" argument is the name to be given to the newly created column from the transformation. 
+#The "values_to" argument is the name of the variable to hold the values of the columns.
+
+#### Calculate the change of the metric and add a column to the table, we dont calculate a change in PFFD because its static metric
+
+dex_price_table <- dex_price_table %>%
+  group_by(ticker) %>%
+  mutate(price_change = (price / lag(price, n = lookback_period)) - 1) %>%
+  ungroup()
+dex_tvl_table <- dex_tvl_table %>%
+  group_by(ticker) %>%
+  mutate(tvl_change = (tvl / lag(tvl, n = lookback_period)) - 1) %>%
+  ungroup()
+dex_gmv_table <- dex_gmv_table %>%
+  group_by(ticker) %>%
+  mutate(gmv_change = (gmv / lag(gmv, n = lookback_period)) - 1) %>%
+  ungroup()
+dex_fees_table <- dex_fees_table %>%
+  group_by(ticker) %>%
+  mutate(fees_change = (fees / lag(fees, n = lookback_period)) - 1) %>%
+  ungroup()
+dex_developers_table <- dex_developers_table %>%
+  group_by(ticker) %>%
+  mutate(developers_change = (developers / lag(developers, n = lookback_period)) - 1) %>%
+  ungroup()
+dex_daa_table <- dex_daa_table %>%
+  group_by(ticker) %>%
+  mutate(daa_change = (daa / lag(daa, n = lookback_period)) - 1) %>%
+  ungroup()
+
+##This code chunk applies the same transformation to several data frames: `dex_price_table`, `dex_tvl_table`, `dex_gmv_table`, `dex_fees_table`, `dex_developers_table`, and `dex_daa_table`. 
+
+## Clean again and remove any unneccessary whitespace
+dex_price_table <- dex_price_table %>% mutate(ticker = trimws(ticker))
+dex_tvl_table <- dex_tvl_table %>% mutate(ticker = trimws(ticker))
+dex_gmv_table <- dex_gmv_table %>% mutate(ticker = trimws(ticker))
+dex_fees_table <- dex_fees_table %>% mutate(ticker = trimws(ticker))
+dex_developers_table <- dex_developers_table %>% mutate(ticker = trimws(ticker))
+dex_pffd_table <- dex_pffd_table %>% mutate(ticker = trimws(ticker))
+dex_daa_table <- dex_daa_table %>% mutate(ticker = trimws(ticker))
+
+##For each data frame:
+
+##Rows are grouped by ticker.
+##A new column is added to the data frame, called `*_change`, where `*` is the name of the corresponding data frame (e.g., `price` for `dex_price_table`).
+##The new column contains the percentage change of the `*` column over the past 30 periods (`n = 30`), relative to the previous 30 periods (using `lag()`).
+##Rows are ungrouped.
+
+###### Left join each table with the date_tibble
+
+dex_daa_table_date <- left_join(date_tibble, dex_daa_table, by = "Date", multiple = "all" )
+dex_price_table_date <- left_join(date_tibble, dex_price_table, by = "Date", multiple = "all" )
+dex_tvl_table_date <- left_join(date_tibble, dex_tvl_table, by = "Date", multiple = "all" )
+dex_pffd_table_date <- left_join(date_tibble, dex_pffd_table, by = "Date", multiple = "all" )
+dex_developers_table_date <- left_join(date_tibble, dex_developers_table, by = "Date", multiple = "all" )
+dex_fees_table_date <- left_join(date_tibble, dex_fees_table, by = "Date", multiple = "all" )
+dex_gmv_table_date <- left_join(date_tibble, dex_gmv_table, by = "Date", multiple = "all" )
+
+#These commands use the `left_join()` function from the dplyr library to join together different tables based on a common column called "Date". 
+#The argument `multiple = "all"` specifies that all rows from the two tables should be included in the output, even if they are missing from one of the tables. 
+#These newly joined tables are assigned to new objects with names that end in "_test".
+
+################################################## STEP TWO.FIVE #############################################################################
+################################ merge all sector_metric_table_date tables into one table called dex_table #################################################################
+
+####### Merge all the tables into a single table called dex_table
+
+# Join the dex_price_table_date with dex_tvl_table_date to start dex_table_date
+dex_table_date <- full_join(dex_price_table_date, dex_tvl_table_date, by = c("Date", "ticker"))
+
+# Join the dex_table_date with dex_pffd_table_date
+dex_table_date <- full_join(dex_table_date, dex_pffd_table_date, by = c("Date", "ticker"))
+
+# Join the dex_table_date with dex_developers_table_date
+dex_table_date <- full_join(dex_table_date, dex_developers_table_date, by = c("Date", "ticker"))
+
+# Join the dex_table_date with dex_fees_table_date
+dex_table_date <- full_join(dex_table_date, dex_fees_table_date, by = c("Date", "ticker"))
+
+# Join the dex_table_date with dex_gmv_table_date
+dex_table_date <- full_join(dex_table_date, dex_gmv_table_date, by = c("Date", "ticker"))
+
+# Join dex__table_date and dex_daa_table_date
+dex_table_date <- full_join(dex_table_date, dex_daa_table_date, by = c("Date", "ticker"))
+
+
+################################################## STEP THREE #############################################################################
+################################ calculating forward looking price change #################################################################
+#################################################################################################################################
+
+### convert dex_price to long data format
+dex_RONX <- dex_price %>%
+  pivot_longer(cols = -Date, names_to = "ticker", values_to = "price")
+
+print(dex_RONX)
+
+## Clean to remove whitespace in column headers
+dex_RONX <- dex_RONX %>% mutate(ticker = trimws(ticker))
+
+# Compute the percentage change over the following month
+dex_RONX_table <- dex_RONX %>%
+  group_by(ticker) %>%
+  mutate(RONX = (lead(price, n = lookforward_period) / price) - 1) %>%
+  ungroup()
+
+### now you will have a table of forward looking price changes
+dex_RONX_table_date <- date_tibble %>%
+  left_join(dex_RONX_table, by = "Date", multiple = "all")
+
+### remove the price column so that when merged in step four there is no duplication
+dex_RONX_table_date <- dex_RONX_table_date %>% select(-price)
+
+
+print(dex_RONX_table_date)
+
+##This code chunk first converts the dataset `dex_price` to the long data format using the `pivot_longer()` function from the `tidyr` package. 
+
+##Then, it computes the percentage change over the following 30 days using the `lead()` function within a pipeline that groups the dataset by ticker and then ungroups it.
+
+##Lastly, it performs a left join of the `date_tibble` and `dex_RONX` datasets by the "Date" column and assigns the resulting table to `dex_RONX_table`. The `trimws()` function is used to remove any leading or trailing whitespaces from the "ticker" column. The resulting table should contain forward-looking price changes for the different tickers.
+
+################################################## STEP FOUR #############################################################################
+################################ Joining the dex_table and the RONX table #################################################################
+#################################################################################################################################
+
+# Join the dex_table with dex_gmv_test
+full_dex_table <- full_join(dex_table_date, dex_RONX_table_date, by = c("Date", "ticker"))
+
+
+# Print the updated dex_table
+print(full_dex_table)
+
+#This code joins two data frames, dex_table and dex_RONX_table, using the "Date" and "ticker" columns as the joining criteria. 
+#Then the code removes the "price.y" column, renames the "price.x" column to "price", and selects all remaining columns. 
+#Finally, it prints the updated dex_table.
+
+################################################## STEP FIVE #############################################################################
+################################ Ranking of each column in dex_table and adding of new columns and create ranks only tibble #################################################################
+#################################################################################################################################
+
+# Add the ranking columns
+dex_table_ranks <- full_dex_table %>%
+  group_by(Date) %>%
+  mutate(price_change_rank = dense_rank(desc(price_change)),
+         RONX_rank = dense_rank(desc(RONX)),
+         tvl_rank = dense_rank(desc(tvl)),
+         tvl_change_rank = dense_rank(desc(tvl_change)),
+         pffd_rank = dense_rank((pffd)),
+         gmv_rank = dense_rank(desc(gmv)),
+         gmv_change_rank = dense_rank(desc(gmv_change)),
+         fees_rank = dense_rank(desc(fees)),
+         fees_change_rank = dense_rank(desc(fees_change)),
+         developers_rank = dense_rank(desc(developers)),
+         developers_change_rank = dense_rank(desc(developers_change)),
+         daa_rank = dense_rank(desc(daa)),
+         daa_change_rank = dense_rank(desc(daa_change))) %>%
+  ungroup()
+
+print(dex_table_ranks)
+
+#select only the columns that contain the word "rank"
+dex_table_ranks_only <- dex_table_ranks %>%
+  select(Date,ticker, contains("rank"))
+
+# Print the new table with Date and rank columns only
+
+# Print the new table with Date and rank columns only
+print(dex_table_ranks_only)
+
+#This piece of code is adding ranking columns to the `dex_table` dataframe. 
+#It is grouping by `Date` and adding a new rank column for each of the 12 columns mentioned. 
+#The `dense_rank()` function is being used to create a rank for each row based on the value in the specified column. 
+#A higher rank means a higher value in the column. 
+#The new dataframe with the added rank columns is called `dex_table_ranks`.
+#The second piece of code is creating a new dataframe called `dex_table_ranks_only` which contains only the `Date` column and columns with "rank" in their names. 
+#The `select()` function is being used to filter the columns from `dex_table_ranks`. 
+#The `print()` function is being used to display the `dex_table_ranks_only` dataframe.
+
+################################################## STEP SIX #############################################################################
+################################ Calculate the correlation between RONX and each metric, create new columns, then only keep correlations #################################################################
+#################################################################################################################################
+
+
+dex_table_ranks_corr <- dex_table_ranks_only %>%
+  group_by(Date) %>%
+  mutate(price_change_corr = cor(price_change_rank, RONX_rank, use = "pairwise.complete.obs"),
+         daa_corr = cor(daa_rank, RONX_rank, use = "pairwise.complete.obs"),
+         daa_change_corr = cor(daa_change_rank, RONX_rank, use = "pairwise.complete.obs"),
+         tvl_corr = cor(tvl_rank, RONX_rank, use = "pairwise.complete.obs"),
+         tvl_change_corr = cor(tvl_change_rank, RONX_rank, use = "pairwise.complete.obs"),
+         pffd_corr = cor(pffd_rank, RONX_rank, use = "pairwise.complete.obs"),
+         gmv_corr = cor(gmv_rank, RONX_rank, use = "pairwise.complete.obs"),
+         gmv_change_corr = cor(gmv_change_rank, RONX_rank, use = "pairwise.complete.obs"),
+         fees_corr = cor(fees_rank, RONX_rank, use = "pairwise.complete.obs"),
+         fees_change_corr = cor(fees_change_rank, RONX_rank, use = "pairwise.complete.obs"),
+         developers_corr = cor(developers_rank, RONX_rank, use = "pairwise.complete.obs"),
+         developers_change_corr = cor(developers_change_rank, RONX_rank, use = "pairwise.complete.obs"))
+
+# Print the resulting table with correlation columns added
+print(dex_table_ranks_corr)
+
+
+# Filter columns with 'Date' and containing 'corr' in the name
+dex_table_corr_only <- dex_table_ranks_corr %>%
+  select(Date, contains("corr"))
+
+# Print the resulting table
+print(dex_table_corr_only)
+
+# Get rid of duplicate dates
+dex_table_corr_date_only <- dex_table_corr_only %>%
+  distinct(Date, .keep_all = TRUE)
+
+# Print the resulting table
+print(dex_table_corr_date_only)
+
+##This code calculates the pairwise correlations between the RONX token rank and the ranks of several other metrics (price_change_rank, daa_rank, daa_change_rank, tvl_rank, tvl_change_rank, pffd_rank, gmv_rank, gmv_change_rank, fees_rank, fees_change_rank, developers_rank and developers_change_rank) based on their respective ranks. The resulting table with the correlations is stored in the "dex_table_ranks_corr" object. 
+
+#The code then selects only the "Date" column and other columns that contain the string "corr" in their names, and saves them to the "dex_table_corr_only" object. 
+
+#The next step is to remove duplicate dates and only keep the first occurrence of each unique date. This is stored in the "dex_table_corr_date_only" object. 
+
+#All three tables are printed using the `print()` function.
+
+#Rewrite this code more efficiently
+
+#The revised code uses the `summarise()` function and `across()` to calculate pairwise correlations on all columns containing "_rank" in their names. This replaces the need to write out each correlation as a separate line of code.
+
+#Additionally, the `distinct()` function replaces the `mutate()` function used in the initial code to remove duplicate dates.
+
+################################################## STEP SEVEN #############################################################################
+################################ Calculate the cumulative correlation for each column #################################################################
+#################################################################################################################################
+
+# Calculate the cumulative correlation for each column
+# Calculate the cumulative correlation for each column
+dex_table_cum <- dex_table_corr_date_only %>%
+  ungroup() %>%
+  mutate(
+    price_change_cum = cumsum(price_change_corr),
+    daa_cum = cumsum(daa_corr),
+    daa_change_cum = cumsum(daa_change_corr),
+    tvl_cum = cumsum(tvl_corr),
+    tvl_change_cum = cumsum(tvl_change_corr),
+    pffd_cum = cumsum(pffd_corr),
+    gmv_cum = cumsum(gmv_corr),
+    gmv_change_cum = cumsum(gmv_change_corr),
+    fees_cum = cumsum(fees_corr),
+    fees_change_cum = cumsum(fees_change_corr),
+    developers_cum = cumsum(developers_corr),
+    developers_change_cum = cumsum(developers_change_corr)
+  )
+###This code is creating a new dataframe called `dex_table_cumulative` from an existing dataframe called `dex_table_corr_date_only`. 
+
+###The `ungroup()` function removes grouping information from the dataframe, if any exists.
+
+###The `mutate()` function is used to add new variables to the dataframe. In this case, the code is creating several new columns, which are the cumulative sums of existing columns, using the `cumsum()` function. 
+
+###For example, `price_change_cum` is the cumulative sum of the `price_change_corr` column. Similarly, `daa_cum` is the cumulative sum of the `daa_corr` column, and so on for the other columns.
+
+###Overall, the code is creating a new dataframe that contains cumulative sums of several columns from an existing dataframe.
+
+# Print the resulting table
+print(dex_table_cumulative)
+
+# Create a table with only 'Date' column and columns containing 'cum'
+dex_table_cum_only <- dex_table_cumulative %>%
+  select(Date, contains("cum"))
+
+# Print the resulting table
+print(dex_cum_only)
+
+################################################## STEP EIGHT #############################################################################
+################################ Calculate the mean, std dev, obs, tstat for all the metrics, summarize and put in one table #################################################################
+#########################################################################################################################################
+
+library(dplyr)
+
+
+# Calculate the mean, standard deviation, count, and t-statistic for the price change correlation
+summary_stats_price_change <- dex_table_corr_date_only %>%
+  ungroup() %>%
+  summarise(
+    metric = "price_change",
+    mean = mean(price_change_corr, na.rm = TRUE),
+    sd = sd(price_change_corr, na.rm = TRUE),
+    count = n(),
+    t_stat = mean / (sd / sqrt(count))
+  )
+
+# Calculate the mean, standard deviation, count, and t-statistic for the daa correlation
+summary_stats_daa <- dex_table_corr_date_only %>%
+  ungroup() %>%
+  summarise(
+    metric = "daa",
+    mean = mean(daa_corr, na.rm = TRUE),
+    sd = sd(daa_corr, na.rm = TRUE),
+    count = n(),
+    t_stat = mean / (sd / sqrt(count))
+  )
+
+# Calculate the mean, standard deviation, count, and t-statistic for the daa change correlation
+summary_stats_daa_change <- dex_table_corr_date_only %>%
+  ungroup() %>%
+  summarise(
+    metric = "daa_change",
+    mean = mean(daa_change_corr, na.rm = TRUE),
+    sd = sd(daa_change_corr, na.rm = TRUE),
+    count = n(),
+    t_stat = mean / (sd / sqrt(count))
+  )
+
+# Calculate the mean, standard deviation, count, and t-statistic for the tvl change correlation
+summary_stats_tvl_change <- dex_table_corr_date_only %>%
+  ungroup() %>%
+  summarise(
+    metric = "tvl_change",
+    mean = mean(tvl_change_corr, na.rm = TRUE),
+    sd = sd(tvl_change_corr, na.rm = TRUE),
+    count = n(),
+    t_stat = mean / (sd / sqrt(count))
+  )
+
+# calculate the mean, sd, count, and t-statistic for the tvl_corr variable
+summary_stats_tvl <- dex_table_corr_date_only %>%
+  ungroup() %>%
+  summarise(
+    metric = "tvl",
+    mean = mean(tvl_corr, na.rm = TRUE),
+    sd = sd(tvl_corr, na.rm = TRUE),
+    count = n(),
+    t_stat = mean / (sd / sqrt(count))
+  )
+
+# calculate the mean, sd, count, and t-statistic for the fees_corr variable
+summary_stats_fees <- dex_table_corr_date_only %>%
+  ungroup() %>%
+  summarise(
+    metric = "fees",
+    mean = mean(fees_corr, na.rm = TRUE),
+    sd = sd(fees_corr, na.rm = TRUE),
+    count = n(),
+    t_stat = mean / (sd / sqrt(count))
+  )
+
+# calculate the mean, sd, count, and t-statistic for the fees_change_corr variable
+summary_stats_fees_change <- dex_table_corr_date_only %>%
+  ungroup() %>%
+  summarise(
+    metric = "fees_change",
+    mean = mean(fees_change_corr, na.rm = TRUE),
+    sd = sd(fees_change_corr, na.rm = TRUE),
+    count = n(),
+    t_stat = mean / (sd / sqrt(count))
+  )
+
+# calculate the mean, sd, count, and t-statistic for the gmv_change_corr variable
+summary_stats_gmv_change <- dex_table_corr_date_only %>%
+  ungroup() %>%
+  summarise(
+    metric = "gmv_change",
+    mean = mean(gmv_change_corr, na.rm = TRUE),
+    sd = sd(gmv_change_corr, na.rm = TRUE),
+    count = n(),
+    t_stat = mean / (sd / sqrt(count))
+  )
+
+# calculate the mean, sd, count, and t-statistic for the gmv_corr variable
+summary_stats_gmv <- dex_table_corr_date_only %>%
+  ungroup() %>%
+  summarise(
+    metric = "gmv",
+    mean = mean(gmv_corr, na.rm = TRUE),
+    sd = sd(gmv_corr, na.rm = TRUE),
+    count = n(),
+    t_stat = mean / (sd / sqrt(count))
+  )
+
+# calculate the mean, sd, count, and t-statistic for the developers_change_corr variable
+summary_stats_developers_change <- dex_table_corr_date_only %>%
+  ungroup() %>%
+  summarise(
+    metric = "developers_change",
+    mean = mean(developers_change_corr, na.rm = TRUE),
+    sd = sd(developers_change_corr, na.rm = TRUE),
+    count = n(),
+    t_stat = mean / (sd / sqrt(count))
+  )
+
+# calculate the mean, sd, count, and t-statistic for the developers_corr variable
+summary_stats_developers <- dex_table_corr_date_only %>%
+  ungroup() %>%
+  summarise(
+    metric = "developers",
+    mean = mean(developers_corr, na.rm = TRUE),
+    sd = sd(developers_corr, na.rm = TRUE),
+    count = n(),
+    t_stat = mean / (sd / sqrt(count))
+  )
+
+# calculate the mean, sd, count, and t-statistic for the pffd_corr variable
+summary_stats_pffd <- dex_table_corr_date_only %>%
+  ungroup() %>%
+  summarise(
+    metric = "pffd",
+    mean = mean(pffd_corr, na.rm = TRUE),
+    sd = sd(pffd_corr, na.rm = TRUE),
+    count = n(),
+    t_stat = mean / (sd / sqrt(count))
+  )
+
+###This code calculates summary statistics for several correlation variables in the `dex_table_corr_date_only` data frame, including the mean, standard deviation, count, and t-statistic. 
+###The t-statistic is calculated as the mean divided by the standard error of the mean. The `ungroup()` function is used to remove any grouping that may have been applied to the data before summarizing. The `na.rm = TRUE` argument is used in the `mean()` and `sd()` functions to remove any missing values before calculating the statistics.
+
+
+combined_summary_stats_long <- bind_rows(
+  summary_stats_price_change,
+  summary_stats_daa_change,
+  summary_stats_daa,
+  summary_stats_tvl_change,
+  summary_stats_tvl,
+  summary_stats_fees_change,
+  summary_stats_fees,
+  summary_stats_developers_change,
+  summary_stats_developers,
+  summary_stats_pffd,
+  summary_stats_gmv,
+  summary_stats_gmv_change
+)
+
+### Print the combined stats summary, includes metric, mean, std dev, observations and tstats
+print(combined_summary_stats_long)
+
+################################################## Charting one  #############################################################################
+################################ Charts for all the correlation data #################################################################
+#########################################################################################################################################
+
+# Create individual plots for each column
+plot1 <- ggplot(data = dex_table_corr_date_only, aes(x = Date, y = price_change_corr)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "Price Change Correlation",
+       x = "Date",
+       y = "Correlation")
+
+plot2 <- ggplot(data = dex_table_corr_date_only, aes(x = Date, y = daa_corr)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "DAA Correlation",
+       x = "Date",
+       y = "Correlation")
+
+plot3 <- ggplot(data = dex_table_corr_date_only, aes(x = Date, y = daa_change_corr)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "DAA Change Correlation",
+       x = "Date",
+       y = "Correlation")
+
+plot4 <- ggplot(data = dex_table_corr_date_only, aes(x = Date, y = tvl_corr)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "TVL Correlation",
+       x = "Date",
+       y = "Correlation")
+
+plot5 <- ggplot(data = dex_table_corr_date_only, aes(x = Date, y = tvl_change_corr)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "TVL Change Correlation",
+       x = "Date",
+       y = "Correlation")
+
+plot6 <- ggplot(data = dex_table_corr_date_only, aes(x = Date, y = pffd_corr)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "PFFD Correlation",
+       x = "Date",
+       y = "Correlation")
+
+plot7 <- ggplot(data = dex_table_corr_date_only, aes(x = Date, y = gmv_corr)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "GMV Correlation",
+       x = "Date",
+       y = "Correlation")
+
+plot8 <- ggplot(data = dex_table_corr_date_only, aes(x = Date, y = gmv_change_corr)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "GMV Change Correlation",
+       x = "Date",
+       y = "Correlation")
+
+plot9 <- ggplot(data = dex_table_corr_date_only, aes(x = Date, y = fees_corr)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "Fees Correlation",
+       x = "Date",
+       y = "Correlation")
+
+plot10 <- ggplot(data = dex_table_corr_date_only, aes(x = Date, y = fees_change_corr)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "Fees Change Correlation",
+       x = "Date",
+       y = "Correlation")
+
+plot11 <- ggplot(data = dex_table_corr_date_only, aes(x = Date, y = developers_corr)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "Developers Correlation",
+       x = "Date",
+       y = "Correlation")
+
+plot12 <- ggplot(data = dex_table_corr_date_only, aes(x = Date, y = developers_change_corr)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "Developers Change Correlation",
+       x = "Date",
+       y = "Correlation")
+
+# Arrange all the plots into a grid
+grid.arrange(plot1, plot2, plot3, plot4, plot5, plot6, plot7, plot8, plot9, plot10, plot11, plot12, ncol = 3)
+
+################################################## Charting two  #############################################################################
+################################ Charts for all the cumulative correlation data #################################################################
+##################################################################################################################################################
+# Create individual plots for each column
+plot13 <- ggplot(data = dex_cum_only, aes(x = Date, y = price_change_cum)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "Price Change Cum Correlation",
+       x = "Date",
+       y = "Correlation")
+
+# plot the cumulative correlation between DAA and DEX
+plot14 <- ggplot(data = dex_cum_only, aes(x = Date, y = daa_cum)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "DAA Cum Correlation",
+       x = "Date",
+       y = "Correlation")
+
+# plot the cumulative correlation between DAA change and DEX
+plot15 <- ggplot(data = dex_cum_only, aes(x = Date, y = daa_change_cum)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "DAA Change Cum Correlation",
+       x = "Date",
+       y = "Correlation")
+
+# plot the cumulative correlation between TVL and DEX
+plot16 <- ggplot(data = dex_cum_only, aes(x = Date, y = tvl_cum)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "TVL Cum Correlation",
+       x = "Date",
+       y = "Correlation")
+
+
+# plot the cumulative correlation between TVL change and DEX volume
+plot17 <- ggplot(data = dex_cum_only, aes(x = Date, y = tvl_change_cum)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "TVL Change Cum Correlation",
+       x = "Date",
+       y = "Correlation")
+
+# plot the cumulative correlation between PFFD and DEX volume
+plot18 <- ggplot(data = dex_cum_only, aes(x = Date, y = pffd_cum)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "PFFD Cum Correlation",
+       x = "Date",
+       y = "Correlation")
+
+# plot the cumulative correlation between GMV and DEX volume
+plot19 <- ggplot(data = dex_cum_only, aes(x = Date, y = gmv_cum)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "GMV Cum Correlation",
+       x = "Date",
+       y = "Correlation")
+
+# plot the cumulative correlation between GMV change and DEX volume
+plot20 <- ggplot(data = dex_cum_only, aes(x = Date, y = gmv_change_cum)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "GMV Change Cum Correlation",
+       x = "Date",
+       y = "Correlation")
+
+# plot the cumulative correlation between fees and DEX volume
+plot21 <- ggplot(data = dex_cum_only, aes(x = Date, y = fees_cum)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "Fees Cum Correlation",
+       x = "Date",
+       y = "Correlation")
+
+# plot the cumulative correlation between fees change and DEX volume
+plot22 <- ggplot(data = dex_cum_only, aes(x = Date, y = fees_change_cum)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "Fees Change Cum Correlation",
+       x = "Date",
+       y = "Correlation")
+
+# plot the cumulative correlation between developers and DEX volume
+plot23 <- ggplot(data = dex_cum_only, aes(x = Date, y = developers_cum)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "Developers Cum Correlation",
+       x = "Date",
+       y = "Correlation")
+
+# plot the cumulative correlation between developers change and DEX volume
+plot24 <- ggplot(data = dex_cum_only, aes(x = Date, y = developers_change_cum)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "Developers Change Cum Correlation",
+       x = "Date",
+       y = "Correlation")
+
+
+# Arrange all the plots into a grid
+grid.arrange(plot13, plot14, plot15, plot16, plot17, plot18, plot19, plot20, plot21, plot22, plot23, plot24, ncol = 3)
+print(combined_summary_stats_long)
